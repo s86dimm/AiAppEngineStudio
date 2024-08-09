@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_script_include">
+    <sys_script_include action="INSERT_OR_UPDATE">
+        <access>public</access>
+        <active>true</active>
+        <api_name>x_535429_ai_app_0.AIContentItemUtil</api_name>
+        <caller_access/>
+        <client_callable>false</client_callable>
+        <description/>
+        <name>AIContentItemUtil</name>
+        <script><![CDATA[var AIContentItemUtil = Class.create();
+AIContentItemUtil.prototype = {
+    initialize: function() {
+        this.AI_CONTENT_ITEM = 'x_535429_ai_busi_0_ai_content_item';
+    },
+
+    insertContentItem: function(parent_id, type, content, usage) {
+        var gr = new GlideRecord(this.AI_CONTENT_ITEM);
+        gr.content = content;
+        gr.type = type;
+        gr.parent = parent_id;
+        if (usage) {
+            gr.input_tokens = usage.prompt_tokens;
+            gr.output_tokens = usage.completion_tokens;
+        }
+
+        gr.insert();
+    },
+
+    updateContentItem: function(sys_id, content) {
+        var gr = new GlideRecord(this.AI_CONTENT_ITEM);
+        gr.get(sys_id);
+        gr.content = content;
+        gr.update();
+    },
+
+    getTypesFromContentItem: function(parent_id) {
+        var ga = new GlideAggregate('x_535429_ai_busi_0_ai_content_item');
+        ga.addAggregate('COUNT', 'type');
+        ga.addQuery('parent', parent_id);
+        ga.groupBy('type');
+        ga.query();
+
+        var uniqueTypes = [];
+        while (ga.next()) {
+            uniqueTypes.push(ga.getValue('type'));
+        }
+
+        return uniqueTypes;
+    },
+
+    retriveContentItem: function(parent_id) {
+        var types = this.getTypesFromContentItem(parent_id);
+
+        var payload = {};
+
+        var AI_CONTENT_ITEM = this.AI_CONTENT_ITEM;
+
+        types.forEach(function(type) {
+            var gr = new GlideRecord(AI_CONTENT_ITEM);
+            gr.addQuery('parent', parent_id);
+            gr.addQuery('type', type);
+            gr.orderByDesc('sys_created_on');
+            gr.query();
+            if (gr.next()) {
+                payload[type] = {
+                    content: gr.getValue('content'),
+                    sys_id: gr.getValue('sys_id')
+                };
+            }
+        });
+
+        return payload;
+    },
+
+    type: 'AIContentItemUtil'
+};]]></script>
+        <sys_class_name>sys_script_include</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2024-08-09 12:46:20</sys_created_on>
+        <sys_id>b33310af8337021012a5c4b6feaad3ca</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>AIContentItemUtil</sys_name>
+        <sys_package display_value="AI App Engine Studio" source="x_535429_ai_app_0">8a036b978373021012a5c4b6feaad36e</sys_package>
+        <sys_policy>read</sys_policy>
+        <sys_scope display_value="AI App Engine Studio">8a036b978373021012a5c4b6feaad36e</sys_scope>
+        <sys_update_name>sys_script_include_b33310af8337021012a5c4b6feaad3ca</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2024-08-09 12:46:20</sys_updated_on>
+    </sys_script_include>
+</record_update>

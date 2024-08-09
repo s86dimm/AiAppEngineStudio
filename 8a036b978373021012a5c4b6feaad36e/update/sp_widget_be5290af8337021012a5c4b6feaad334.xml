@@ -1,0 +1,1264 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sp_widget">
+    <sp_widget action="INSERT_OR_UPDATE">
+        <category>custom</category>
+        <client_script><![CDATA[api.controller=function($scope, $rootScope, $location, $uibModal) {
+	/* widget controller */
+	var c = this;
+
+
+	c.calculateCost = function (tokens, ratePerMillion) {
+		var cost = (tokens / 1000000) * ratePerMillion;
+		return cost.toFixed(4);
+	}
+	
+	c.getSum = function (a,b){
+		return (parseFloat(a)+ parseFloat(b)).toFixed(4);
+	}
+
+	c.cs_props = {
+		expand_items : {
+			refine_l2_schema : {
+				expanded : false
+			},
+			schema_expansion_result : {
+				expanded : false
+			},
+			requirement_construction : {
+				expanded : false
+			},
+			user_input : {
+				expanded : true
+			}
+		}
+	}
+
+	// Assuming you have an AngularJS controller or script
+
+	$scope.removeItem = function(sourceArray, item) {
+		var index = sourceArray.indexOf(item);
+		if (index > -1) {
+			sourceArray.splice(index, 1);
+		}
+	};
+
+
+
+
+	c.getFieldSuggestion = function(){
+		c.data.action = 'get_field_suggestions';
+		c.server.update().then(function(res){
+			c.data.sections = (JSON.parse(c.data.field_suggestions.message.content)).sections;
+			console.log(JSON.parse(c.data.field_suggestions.message.content))
+		});
+	};
+
+
+	c.wip = false;
+	$scope.loadingIndicator = $rootScope.loadingIndicator;
+	c.loadConversation = function(thread_sys_id){
+		$location.url('/sp?id=ai_table_creation_wizard&thread_sys_id=' + thread_sys_id);
+	}
+	c.newThread = function(){
+		c.data.action = 'new_thread';
+		c.server.update().then(function(res){
+			c.loadConversation(res.new_thread_sys_id);
+		});
+	}
+	c.data_bridge = {
+		user_input : {
+			table_name : null,
+			table_description : null
+		},
+		ai_enhanced_user_requirement : null
+	}
+
+	c.setActionName = function(action_name){
+		c.data.action = action_name;
+	};
+
+	c.setPayload = function(payload){
+		c.data.action_payload = payload;
+	}
+
+	c.setCallBack = function(callBack){
+
+	}
+
+
+	c.setScope = function(thread_props){
+		c.makeServerCall('update_thread_props',thread_props,function(res){
+
+		});
+	}
+
+	c.loadTables = function(tables,scope_id){
+		c.makeServerCall('load_tables', {
+			tables : tables,
+			scope_id : scope_id
+		}, function(res){
+
+		} );
+	}
+
+
+
+	c.makeServerCall = function(action_name, payload, callBack){
+		c.setActionName(action_name);
+		c.setPayload(payload);
+		c.wip = true;
+		c.server.update().then(function(res){
+			callBack(res);
+			var keys = Object.keys(c.data.stage);
+			keys.forEach(function(key){
+				c.data_bridge[key] = c.data.stage[key].content; 
+			})
+
+			if(! c.bypass_api_call){
+				c.wip = false;
+			}
+			else{
+				if(action_name == 'store_l2_schema'){
+					c.wip = false;
+					c.bypass_api_call = false;
+				}
+			}
+
+		}, function(){
+			c.wip = false;
+		});
+	}
+
+	c.submitUserInput = function( user_requirement ){
+		c.loading_message = "Extracting and enhancing user requirement";
+		c.makeServerCall('submit_user_input', {
+			user_requirement : user_requirement
+		}, function(res){
+			//c.data_bridge.ai_enhanced_user_requirement = res.call_result.message.content;
+			c.visibility_matrix.enhanced_user_input = true;
+			//c.generateFields(c.data_bridge.user_input.table_name, c.data_bridge.user_input.table_description, c.data_bridge.ai_enhanced_user_requirement)
+
+		});
+	}
+
+	c.submitFeedbackForAI = function(feedback_to_ai, enhanced_requirement, user_input ){
+		c.loading_message = "Re-Generating Response";
+		c.makeServerCall('submit_user_input', {
+			user_requirement : user_input,
+			enhanced_requirement : enhanced_requirement,
+			feedback_to_ai : feedback_to_ai
+		}, function(res){
+
+		});
+	}
+
+	c.generateFields = function(table_name, table_description, ai_enhanced_user_requirement){
+		c.loading_message = "Generating field suggestions";
+		c.makeServerCall('gen_field_suggestions', {
+			table_name : table_name,
+			table_description : table_description,
+			ai_enhanced_user_requirement : ai_enhanced_user_requirement
+		}, function(res){
+			c.visibility_matrix.field_section_suggestion = true;
+			c.data_bridge.field_section_suggestion = res.call_result.message.content;
+
+		});
+	}
+
+	c.refineL2Schema = function(tables){
+		c.makeServerCall('refine_l2_schema',tables,function(res){
+		});
+	}
+
+	c.bypass_api_call = false;
+
+	c.generateTableSchemaRec = function(tables, schema_buffer, index){
+		c.bypass_api_call = true;
+
+		if((index!=0) &&  !index){
+			c.wip = true;
+			c.makeServerCall('store_l2_schema', c.schema_buffer,function(res){
+
+			});
+			return;
+		}
+
+		var next_index;
+
+		if((index + 1) < tables.length ){
+			next_index = index+1;
+		}
+
+		var table = tables[index];
+
+		if(table.ootb && table.ootb){
+			c.generateTableSchemaRec(tables, schema_buffer, next_index);
+		}else{
+			c.loading_message = "Generating L2 Schema for table " + table.name;	
+			c.wip = true;
+			c.makeServerCall('generate_l2_schema', {
+				table_details : {
+					name : table.name,
+					description : table.description,
+					tables : tables
+				}
+			},function(res){
+				schema_buffer.push({
+					table : table.name,
+					content : res.cal,
+					usage : res.usage
+				})
+				c.generateTableSchemaRec(tables, schema_buffer, next_index);
+			});
+		}
+	}
+
+	c.schema_buffer = [];
+
+	c.generateL2TableSchema = function(expanded_requirements){
+		//var schema_buffer = [];
+
+		c.generateTableSchemaRec(expanded_requirements, c.schema_buffer, 0);
+
+	}
+
+	c.visibility_matrix = {
+		user_input : true,
+		enhanced_user_input : false,
+		field_section_suggestion :  false
+	};
+
+};
+
+//To store HR related details of an employee which are not found in OOTB servicenow's sys_user table, similar to HR profile table in HR Scope but we dont have HR application so get fields similar to that and beyond what are present in HR Profile table from HR scope in ServiceNow]]></client_script>
+        <controller_as>c</controller_as>
+        <css>.table-container {&#13;
+  display: flex;&#13;
+  flex-wrap: wrap;&#13;
+  gap: 20px;&#13;
+}&#13;
+&#13;
+.table-block {&#13;
+  border: 1px solid #ddd;&#13;
+  padding: 15px;&#13;
+  margin-bottom: 20px;&#13;
+  border-radius: 5px;&#13;
+  background-color: #f9f9f9;&#13;
+  flex: 1 1 calc(50% - 20px); /* Two blocks per row with some gap */&#13;
+  box-sizing: border-box;&#13;
+}&#13;
+&#13;
+&#13;
+.table-block-md4{&#13;
+  border: 1px solid #ddd;&#13;
+  padding: 15px;&#13;
+  margin-bottom: 20px;&#13;
+  border-radius: 5px;&#13;
+  background-color: #f9f9f9;&#13;
+  flex: 1 1 calc(33.33% - 20px);&#13;
+  box-sizing: border-box;&#13;
+&#13;
+}&#13;
+h4 {&#13;
+  color: #4CAF50;&#13;
+}&#13;
+&#13;
+table {&#13;
+  width: 100%;&#13;
+  border-collapse: collapse;&#13;
+  margin-top: 10px;&#13;
+}&#13;
+&#13;
+td, th {&#13;
+  padding: 8px;&#13;
+  border: 1px solid #ddd;&#13;
+}&#13;
+&#13;
+th {&#13;
+  background-color: #f2f2f2;&#13;
+}&#13;
+&#13;
+ul {&#13;
+  list-style-type: none;&#13;
+  padding: 0;&#13;
+  margin: 0;&#13;
+}&#13;
+&#13;
+li {&#13;
+  margin: 5px 0;&#13;
+}&#13;
+&#13;
+&#13;
+.table-block {&#13;
+  background: #f9f9f9;&#13;
+  border: 1px solid #ddd;&#13;
+  border-radius: 8px;&#13;
+  margin-bottom: 20px;&#13;
+  padding: 15px;&#13;
+  transition: box-shadow 0.3s ease;&#13;
+}&#13;
+&#13;
+.table-block:hover {&#13;
+  box-shadow: 0 0 10px rgba(0,0,0,0.1);&#13;
+}&#13;
+&#13;
+.table-header {&#13;
+  display: flex;&#13;
+  justify-content: space-between;&#13;
+  align-items: center;&#13;
+  border-bottom: 2px solid #007bff;&#13;
+  padding-bottom: 10px;&#13;
+  margin-bottom: 15px;&#13;
+}&#13;
+&#13;
+.table-header h4 {&#13;
+  font-size: 1.5em;&#13;
+  color: #007bff;&#13;
+}&#13;
+&#13;
+.table-header button {&#13;
+  background-color: #007bff;&#13;
+  color: #fff;&#13;
+  border: none;&#13;
+  border-radius: 4px;&#13;
+  padding: 5px 10px;&#13;
+  cursor: pointer;&#13;
+  transition: background-color 0.3s ease;&#13;
+}&#13;
+&#13;
+.table-header button:hover {&#13;
+  background-color: #0056b3;&#13;
+}&#13;
+&#13;
+.table-content p {&#13;
+  font-size: 1.1em;&#13;
+  margin: 10px 0;&#13;
+}&#13;
+&#13;
+.relationships-section h5 {&#13;
+  font-size: 1.3em;&#13;
+  margin-bottom: 10px;&#13;
+  color: #333;&#13;
+}&#13;
+&#13;
+.relationships-table {&#13;
+  width: 100%;&#13;
+  border-collapse: collapse;&#13;
+  margin-top: 10px;&#13;
+}&#13;
+&#13;
+.relationships-table th, .relationships-table td {&#13;
+  padding: 8px;&#13;
+  text-align: left;&#13;
+  border-bottom: 1px solid #ddd;&#13;
+}&#13;
+&#13;
+.relationships-table th {&#13;
+  background-color: #007bff;&#13;
+  color: #fff;&#13;
+}&#13;
+&#13;
+.relationships-table td {&#13;
+  background-color: #fff;&#13;
+}&#13;
+&#13;
+.relationships-table tr:hover td {&#13;
+  background-color: #f1f1f1;&#13;
+}&#13;
+&#13;
+.btn-danger {&#13;
+  background-color: #dc3545;&#13;
+  color: #fff;&#13;
+  border: none;&#13;
+  border-radius: 4px;&#13;
+  padding: 5px 10px;&#13;
+  cursor: pointer;&#13;
+  transition: background-color 0.3s ease;&#13;
+}&#13;
+&#13;
+.btn-danger:hover {&#13;
+  background-color: #c82333;&#13;
+}&#13;
+&#13;
+&#13;
+&#13;
+.table-block {&#13;
+  border: 1px solid #ddd;&#13;
+  padding: 15px;&#13;
+  margin-bottom: 20px;&#13;
+  border-radius: 5px;&#13;
+  background-color: #f9f9f9;&#13;
+  flex: 1 1 calc(50% - 20px); /* Two blocks per row with some gap */&#13;
+  box-sizing: border-box;&#13;
+}&#13;
+&#13;
+.table-header {&#13;
+  display: flex;&#13;
+  justify-content: space-between;&#13;
+  align-items: center;&#13;
+  border-bottom: 2px solid #007bff;&#13;
+  padding-bottom: 10px;&#13;
+  margin-bottom: 15px;&#13;
+}&#13;
+&#13;
+.table-header h4 {&#13;
+  font-size: 1.5em;&#13;
+  color: #007bff;&#13;
+}&#13;
+&#13;
+.table-header button {&#13;
+  background-color: #007bff;&#13;
+  color: #fff;&#13;
+  border: none;&#13;
+  border-radius: 4px;&#13;
+  padding: 5px 10px;&#13;
+  cursor: pointer;&#13;
+  transition: background-color 0.3s ease;&#13;
+}&#13;
+&#13;
+.table-header button:hover {&#13;
+  background-color: #0056b3;&#13;
+}&#13;
+&#13;
+.table-content p {&#13;
+  font-size: 1.1em;&#13;
+  margin: 10px 0;&#13;
+}&#13;
+&#13;
+.relationships-section h5 {&#13;
+  font-size: 1.3em;&#13;
+  margin-bottom: 10px;&#13;
+  color: #333;&#13;
+}&#13;
+&#13;
+.relationships-table {&#13;
+  width: 100%;&#13;
+  border-collapse: collapse;&#13;
+  margin-top: 10px;&#13;
+}&#13;
+&#13;
+.relationships-table th, .relationships-table td {&#13;
+  padding: 8px;&#13;
+  text-align: left;&#13;
+  border-bottom: 1px solid #ddd;&#13;
+}&#13;
+&#13;
+.relationships-table th {&#13;
+  background-color: #007bff;&#13;
+  color: #fff;&#13;
+}&#13;
+&#13;
+.relationships-table td {&#13;
+  background-color: #fff;&#13;
+}&#13;
+&#13;
+.relationships-table tr:hover td {&#13;
+  background-color: #f1f1f1;&#13;
+}&#13;
+&#13;
+.btn-danger {&#13;
+  background-color: #dc3545;&#13;
+  color: #fff;&#13;
+  border: none;&#13;
+  border-radius: 4px;&#13;
+  padding: 5px 10px;&#13;
+  cursor: pointer;&#13;
+  transition: background-color 0.3s ease;&#13;
+}&#13;
+&#13;
+.btn-danger:hover {&#13;
+  background-color: #c82333;&#13;
+}&#13;
+&#13;
+&#13;
+.container-fluid {&#13;
+  padding: 15px;&#13;
+}&#13;
+&#13;
+.table-block {&#13;
+  border: 1px solid #ddd;&#13;
+  padding: 15px;&#13;
+  border-radius: 5px;&#13;
+  background-color: #f9f9f9;&#13;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);&#13;
+}&#13;
+&#13;
+.table-header, .section-header {&#13;
+  display: flex;&#13;
+  justify-content: space-between;&#13;
+  align-items: center;&#13;
+  padding-bottom: 10px;&#13;
+  border-bottom: 2px solid #007bff;&#13;
+}&#13;
+&#13;
+.table-header h2, .section-header h3 {&#13;
+  margin: 0;&#13;
+  color: #007bff;&#13;
+}&#13;
+&#13;
+.btn-edit-all {&#13;
+  margin-bottom: 15px;&#13;
+}&#13;
+&#13;
+.table-block h2 {&#13;
+  display: inline-block;&#13;
+  margin-right: 10px;&#13;
+}&#13;
+&#13;
+.section-block {&#13;
+  padding: 10px;&#13;
+  background-color: #fff;&#13;
+  margin-bottom: 15px;&#13;
+  border-radius: 5px;&#13;
+}&#13;
+&#13;
+.section-header h3 {&#13;
+  display: inline-block;&#13;
+  margin-right: 10px;&#13;
+}&#13;
+&#13;
+.table {&#13;
+  margin-top: 10px;&#13;
+}&#13;
+&#13;
+.table thead th {&#13;
+  background-color: #007bff;&#13;
+  color: #fff;&#13;
+}&#13;
+&#13;
+.table-bordered th, .table-bordered td {&#13;
+  border: 1px solid #ddd;&#13;
+}&#13;
+&#13;
+.btn-danger {&#13;
+  color: #fff;&#13;
+  border: none;&#13;
+  border-radius: 4px;&#13;
+  padding: 5px 10px;&#13;
+  cursor: pointer;&#13;
+  transition: background-color 0.3s ease;&#13;
+}&#13;
+&#13;
+.btn-danger:hover {&#13;
+  background-color: #c82333;&#13;
+}&#13;
+</css>
+        <data_table>sp_instance</data_table>
+        <demo_data/>
+        <description/>
+        <docs/>
+        <field_list/>
+        <has_preview>false</has_preview>
+        <id>ai_table_creation_manager</id>
+        <internal>false</internal>
+        <link><![CDATA[function link(scope, element, attrs, controller) {
+  
+}]]></link>
+        <name>AI Table Creation Manager</name>
+        <option_schema/>
+        <public>false</public>
+        <roles/>
+        <script><![CDATA[(function() {
+	/* populate the 'data' object */
+	/* e.g., data.table = $sp.getValue('table'); */
+	var cUtil = new AIContentItemUtil();
+	var aiUtil = new OpenAIV2();
+	var thread_id = $sp.getParameter('thread_sys_id');
+
+
+
+	if(!input){
+		data.table_data = {
+			table_display_name : "",
+			table_scope : {
+				value : "",
+				displayValue : ""
+			},
+			table_description : ""
+		}
+	}
+
+	if(input && input.action){
+
+		var action_payload = input.action_payload;
+
+		if(input.action == 'new_thread'){
+			var gr = new GlideRecord('x_535429_ai_busi_0_ai_content_item');
+			gr.initialize();
+			data.new_thread_sys_id = gr.insert();
+			data.content = JSON.stringify({});
+			return;
+		}
+
+		if(input.action == 'update_thread_props'){
+			var gr = new GlideRecord('x_535429_ai_busi_0_ai_content_item');
+			gr.get(thread_id);
+			gr.content = JSON.stringify(action_payload);
+			gr.update();
+		}
+
+		if(input.action == 'get_field_suggestions'){
+			if(input.stage.table_name)
+				cUtil.insertContentItem(thread_id,'table_name',action_payload.table_name);
+			if(input.stage.table_description)
+				cUtil.insertContentItem(thread_id,'table_name',action_payload.table_description);
+
+			data.field_suggestions = aiUtil.getFieldSuggestions(action_payload.table_data);
+		}
+
+		if(input.action == 'submit_user_input'){ 
+
+			cUtil.insertContentItem(thread_id,'user_requirement',action_payload.user_requirement);
+			data.call_result = aiUtil.getFieldSuggestions(action_payload);
+			cUtil.insertContentItem(thread_id,'requirement_construction', data.call_result.message.content,data.call_result.usage)
+
+		}
+
+		if(input.action == 'store_l2_schema'){
+
+			var usage = {
+				prompt_tokens : 0,
+				total_tokens : 0,
+				completion_tokens : 0
+			}
+
+			action_payload.forEach(function(e){
+				if(e.usage){
+					['prompt_tokens', 'total_tokens', 'completion_tokens'].forEach((function(usage_type){
+						usage[usage_type] = usage[usage_type] + e.usage[usage_type];
+					}));
+				}
+			});
+			cUtil.insertContentItem(thread_id,'schema_expansion_result',JSON.stringify(action_payload), usage);
+		}
+
+		if(input.action == 'refine_l2_schema'){
+			data.call_result = aiUtil.getRefinedL2Schema(action_payload);
+			cUtil.insertContentItem(thread_id,'refine_l2_schema', data.call_result.message.content, data.call_result.usage );
+		}
+
+		if(input.action == 'load_tables'){
+			data.call_result = aiUtil.loadTables(action_payload);
+		}
+
+		if(input.action == 'generate_l2_schema'){
+			//cUtil.insertContentItem(thread_id,'schema_expansion',JSON.stringify(action_payload.table_details));
+			data.call_result = aiUtil.getL2SchemaForTable(action_payload.table_details);
+
+			var res = aiUtil.parseAIResponse(data.call_result.message.content);
+			var usage = data.call_result.usage;
+
+
+			if (res) {
+
+				res.forEach(function(item) {
+					if (item.content_type == 'json') {
+						data.cal = JSON.parse(item.content);
+						data.usage = usage;
+					}
+				});
+
+			}
+
+		}
+
+		if(input.action == 'gen_field_suggestions'){
+
+			data.call_result = aiUtil.genFieldSuggestions(action_payload.table_name,action_payload.table_description,action_payload.ai_enhanced_user_requirement);
+			if(input.stage.field_suggestions && input.stage.field_suggestions.sys_id){
+				cUtil.updateContentItem(input.stage.field_suggestions.sys_id, data.call_result.message.content);
+			}else{
+				cUtil.insertContentItem(thread_id,'field_suggestions', data.call_result.message.content)
+			}
+		}
+	}
+
+	if(thread_id){
+
+		var gr = new GlideRecord("x_535429_ai_busi_0_ai_content_item");
+		gr.get(thread_id);
+		data.ai_thread = {
+			value : gr.getValue('sys_id'),
+			displayValue : gr.getValue('number')
+		}
+		data.stage = cUtil.retriveContentItem(thread_id);
+		data.thread_token_usage = gr.getValue('total_token_usage');
+		data.input_tokens = gr.getValue('input_tokens');
+		data.output_tokens = gr.getValue('output_tokens');
+		var types = Object.keys(data.stage);
+
+		types.forEach(function(type){
+			if(type == 'requirement_construction' || type == 'schema_expansion_result' || type == 'refine_l2_schema' ){
+				data.stage[type].content = JSON.parse(data.stage[type].content)
+			}
+
+		});
+		if(gr.getValue('content'))
+			data.stage.thread_props =  JSON.parse(gr.getValue('content'));
+		else{
+			data.stage.thread_props = {
+				scope : {
+					value : null,
+					displayValue : null
+				}
+			}
+		}
+
+	}else{
+
+		data.stage = {};
+
+		["user_requirement", "requirement_construction", "schema_expansion"].forEach(function(field){
+			data.stage[field] = {
+				content : null
+			}	
+		});
+
+		data.stage.thread_props = {
+			scope : {
+				value : null,
+				displayValue : null
+			}
+		}
+
+	}
+
+})();]]></script>
+        <servicenow>false</servicenow>
+        <sys_class_name>sp_widget</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2024-08-09 12:42:05</sys_created_on>
+        <sys_id>be5290af8337021012a5c4b6feaad334</sys_id>
+        <sys_mod_count>1</sys_mod_count>
+        <sys_name>AI Table Creation Manager</sys_name>
+        <sys_package display_value="AI App Engine Studio" source="x_535429_ai_app_0">8a036b978373021012a5c4b6feaad36e</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="AI App Engine Studio">8a036b978373021012a5c4b6feaad36e</sys_scope>
+        <sys_update_name>sp_widget_be5290af8337021012a5c4b6feaad334</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2024-08-09 12:42:32</sys_updated_on>
+        <template><![CDATA[<div class="col-md-12">
+  <div class="col-md-12">
+    <div class="col-md-6 col-md-offset-6">
+      <span> <b> Total Tokens</b> <i> {{c.data.thread_token_usage}} $({{    c.getSum(c.calculateCost(c.data.input_tokens, 5), c.calculateCost(c.data.output_tokens, 15) )  }})  </i> </span>
+      <span> <b> Input Tokens</b> <i> {{c.data.input_tokens}} </i> <small> ( $ {{ c.calculateCost(c.data.input_tokens, 5) }} )  </small> </span>
+      <span> <b> Output Tokens </b> <i> {{c.data.output_tokens}}  <small> ( $ {{ c.calculateCost(c.data.output_tokens, 15) }} ) </small></i> </span>
+      <sn-record-picker 
+                        field="c.data.ai_thread" 
+                        on-change="c.loadConversation(c.data.ai_thread.value)"
+                        table="'x_535429_ai_busi_0_ai_content_item'" 
+                        display-field="'number'" 
+                        default-query="'parent=NULL'"
+                        value-field="'sys_id'" 
+                        search-fields="'number'" 
+                        page-size="100" >
+      </sn-record-picker>
+      <button class="btn btn-default" ng-click="c.newThread()">
+        New Thread
+      </button>
+    </div>
+  </div>
+  <!--
+  <div class="col-md-6"  ng-show="c.wip">
+    <span> {{c.loading_message}}....</span><img src="x_535429_ai_busi_0.spinner.gif" width="50px"/>
+  </div>
+-->
+
+
+</div>
+<div class="col-md-12"> <!-- Main stack -->
+
+
+
+
+  <div class="col-md-12" ng-if=" c.data.stage.refine_l2_schema.content"> <!-- Field & Section suggestions-->
+
+    <div class="panel panel-default">
+      <div class="panel-heading clearfix">
+        <div class="col-md-12">
+          <h4 class="pull-left">
+            <i class="fa fa-plus-square" 
+               ng-if="!c.cs_props.expand_items.refine_l2_schema.expanded"
+               ng-click="c.cs_props.expand_items.refine_l2_schema.expanded = !c.cs_props.expand_items.refine_l2_schema.expanded" aria-hidden="true"></i>
+            <i class="fa fa-minus-square" 
+               ng-if="c.cs_props.expand_items.refine_l2_schema.expanded"
+               ng-click="c.cs_props.expand_items.refine_l2_schema.expanded = !c.cs_props.expand_items.refine_l2_schema.expanded" aria-hidden="true"></i>
+            AI Generated L2 Schema
+          </h4>
+          <button class="btn btn-primary pull-right" ng-click="c.loadTables(c.data.stage.refine_l2_schema.content[0].content.tables, c.data.stage.thread_props.scope.value)" >
+            Deploy changes in ServiceNow
+          </button>
+        </div>
+        <div class="col-md-12">
+          <sn-record-picker 
+                            field="c.data.stage.thread_props.scope" 
+                            on-change="c.setScope(c.data.stage.thread_props)"
+                            table="'sys_app'" 
+                            display-field="'name,scope'" 
+                            default-query="'parent=NULL'"
+                            value-field="'sys_id'" 
+                            search-fields="'name,scope'" 
+                            page-size="100" >
+          </sn-record-picker>
+        </div>
+      </div>
+      <div class="panel-body" ng-if="c.cs_props.expand_items.refine_l2_schema.expanded">
+
+
+
+
+        <div class="container-fluid">
+          <div class="row mb-3">
+            <div class="col-lg-12">
+              <button class="btn btn-secondary btn-edit-all" ng-click="c.data.stage.refine_l2_schema.editMode = !c.data.stage.refine_l2_schema.editMode">
+                <i class="fa fa-pencil" aria-hidden="true"></i> Edit All
+              </button>
+            </div>
+          </div>
+          <div class="row" ng-repeat="table in c.data.stage.refine_l2_schema.content[0].content.ts">
+            <div class="col-lg-12 mb-3 table-block">
+              <div class="table-header d-flex align-items-center justify-content-between">
+                <h2 class="mb-0">{{table.name || table.n}}</h2>
+                <button class="btn btn-danger btn-sm" ng-click="removeItem(c.data.stage.refine_l2_schema.content[0].content.ts, table)">
+                  <i class="fa fa-trash-o" aria-hidden="true"></i>
+                </button>
+              </div>
+              <div ng-repeat="section in table.ss" class="section-block mt-3">
+                <div class="section-header d-flex align-items-center justify-content-between">
+                  <h3 class="mb-0">{{section.name || section.n}}</h3>
+                  <button class="btn btn-danger btn-sm" ng-click="removeItem(table.ss, section)">
+                    <i class="fa fa-trash-o" aria-hidden="true"></i>
+                  </button>
+                </div>
+                <table class="table table-bordered mt-2">
+                  <thead>
+                    <tr>
+                      <th>Field Name</th>
+                      <th>Type</th>
+                      <th>Mandatory</th>
+                      <th>Length</th>
+                      <th>Reference</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr ng-repeat="field in section.fs">
+                      <td>
+                        <span ng-if="!c.data.stage.refine_l2_schema.editMode">{{field.n || field.field_name}}</span>
+                        <input type="text" ng-model="field.name" ng-if="c.data.stage.refine_l2_schema.editMode">
+                      </td>
+                      <td>
+                        <span ng-if="!c.data.stage.refine_l2_schema.editMode">{{field.field_type || field.t}}</span>
+                        <select ng-model="field.t" ng-if="c.data.stage.refine_l2_schema.editMode">
+                          <option value="string">String</option>
+                          <option value="integer">Integer</option>
+                          <option value="boolean">Boolean</option>
+                          <!-- Add other field types as needed -->
+                        </select>
+                      </td>
+                      <td>
+                        <span ng-if="!c.data.stage.refine_l2_schema.editMode">{{field.r}}</span>
+                        <select ng-model="field.mandatory" ng-if="c.data.stage.refine_l2_schema.editMode">
+                          <option value="true">Yes</option>
+                          <option value="false">No</option>
+                        </select>
+                      </td>
+                      <td>
+                        <span ng-if="!c.data.stage.refine_l2_schema.editMode">{{field.dl || field.default_value}}</span>
+                        <input type="text" ng-model="field.default_value" ng-if="c.data.stage.refine_l2_schema.editMode">
+                      </td>
+                      <td>
+                        <span ng-if="!c.data.stage.refine_l2_schema.editMode">{{field.rf || 'N/A'}}</span>
+                        <input type="text" ng-model="field.reference" ng-if="c.data.stage.refine_l2_schema.editMode">
+                      </td>
+                      <td>
+                        <button class="btn btn-danger btn-sm" ng-click="removeItem(section.fs, field)">
+                          <i class="fa fa-trash-o" aria-hidden="true"></i>
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+
+
+
+        <!--
+        <div class="row">
+          <div class="col-lg-12" ng-repeat="table in c.data.stage.refine_l2_schema.content[0].content.tables">
+            <h2>{{table.name}}</h2>
+            <div ng-repeat="section in table.sections">
+              <h3>{{section.name}}</h3>
+              <table class="table table-bordered">
+                <thead>
+                  <tr>
+                    <th>Field Name</th>
+                    <th>Type</th>
+                    <th>Mandatory</th>
+                    <th>Default Value</th>
+                    <th>Reference</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr ng-repeat="field in section.fields">
+                    <td>{{field.name || field.field_name}}</td>
+                    <td>{{field.field_type || field.type }}</td>
+                    <td>{{field.mandatory}}</td>
+                    <td>{{field.default_length || field.default_value}}</td>
+                    <td>{{field.reference || 'N/A'}}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        -->
+      </div>
+    </div>
+
+  </div>
+
+
+  <div class="col-md-12" ng-if=" c.data.stage.schema_expansion_result.content   "> <!-- Field & Section suggestions-->
+
+    <div class="panel panel-default">
+      <div class="panel-heading clearfix">
+        <h4 class="pull-left">
+          <i class="fa fa-plus-square" 
+             ng-if="!c.cs_props.expand_items.schema_expansion_result.expanded"
+             ng-click="c.cs_props.expand_items.schema_expansion_result.expanded = !c.cs_props.expand_items.schema_expansion_result.expanded" aria-hidden="true"></i>
+          <i class="fa fa-minus-square" 
+             ng-if="c.cs_props.expand_items.schema_expansion_result.expanded"
+             ng-click="c.cs_props.expand_items.schema_expansion_result.expanded = !c.cs_props.expand_items.schema_expansion_result.expanded" aria-hidden="true"></i>
+          AI Generated Table Schema
+        </h4>
+        <button class="btn btn-primary pull-right" ng-click="c.refineL2Schema(c.data.stage.schema_expansion_result.content)">
+          Refine Table Schema
+        </button>
+      </div>
+      <div class="panel-body" ng-if="c.cs_props.expand_items.schema_expansion_result.expanded">
+
+        <div>
+
+          <div class="row ">
+            <div  class="col-md-12" ng-repeat="table in c.data.stage.schema_expansion_result.content">
+              <div class="panel panel-primary">
+                <div class="panel-heading">
+                  <h3>
+                    {{table.table_name || table.table}}
+                  </h3>
+                </div>
+
+                <div class="panel-body table-container ">
+                  <div class="table-block-md4 "ng-repeat="section in table.sections">
+                    <h3>{{section.section_name}}</h3>
+                    <table class="table table-bordered">
+                      <thead>
+                        <tr>
+                          <th>Field</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr ng-repeat="field in section.fields">
+                          <td>{{field}}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="container">
+            <div ng-repeat="table in c.data.stage.schema_expansion_result.content">
+              <h2>{{table['Table Name']}}</h2>
+              <p>{{table['Table Description']}}</p>
+              <div ng-repeat="section in table.Sections">
+                <div ng-repeat="(sectionName, fields) in section">
+                  <h3>{{sectionName}}</h3>
+                  <ul>
+                    <li ng-repeat="field in fields">{{field}}</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div ng-repeat="(tableName, fields) in c.data.stage.requirement_construction.content[1]">
+              <h2>{{tableName}}</h2>
+              <ul>
+                <li ng-repeat="field in fields">{{field}}</li>
+              </ul>
+            </div>
+          </div>
+
+        </div>
+        <form>
+          <!--  Field Section Suggestions-->
+
+
+        </form>
+      </div>
+    </div>
+
+  </div>
+
+
+
+  <div class="col-md-12" ng-if="c.data.stage.requirement_construction.content"> <!-- Enhanced User Requirement -->
+
+    <div class="panel panel-default">
+      <div class="panel-heading clearfix">
+        <h4 class="pull-left">
+
+          <i class="fa fa-plus-square" 
+             ng-if="!c.cs_props.expand_items.requirement_construction.expanded"
+             ng-click="c.cs_props.expand_items.requirement_construction.expanded = !c.cs_props.expand_items.requirement_construction.expanded" aria-hidden="true"></i>
+          <i class="fa fa-minus-square" 
+             ng-if="c.cs_props.expand_items.requirement_construction.expanded"
+             ng-click="c.cs_props.expand_items.requirement_construction.expanded = !c.cs_props.expand_items.requirement_construction.expanded" aria-hidden="true"></i>
+
+
+          Enhanced User Input
+        </h4>
+
+        <button class="btn btn-primary pull-right" ng-click="c.generateL2TableSchema(c.data.stage.requirement_construction.content[0].content.tables)">
+          Generate Detailed Schema
+        </button>
+      </div>
+      <div class="panel-body" ng-if="c.cs_props.expand_items.requirement_construction.expanded">
+        <form>
+
+          <div class="">
+            <div ng-repeat="content in c.data.stage.requirement_construction.content">
+
+              <div class="clearfix">
+                <button class="btn btn-danger pull-right" 
+                        ng-if="!c.data.stage.requirement_construction.edit_mode && !c.data.stage.requirement_construction.ai_edit_mode" 
+                        ng-click="c.data.stage.requirement_construction.ai_edit_mode = true">
+                  <b> <i class="fa fa-bolt" aria-hidden="true"></i> AI Edit </b> 
+                </button>
+                <button class="btn btn-primary pull-right" 
+                        ng-if="!c.data.stage.requirement_construction.edit_mode && !c.data.stage.requirement_construction.ai_edit_mode"
+                        ng-click="c.data.stage.requirement_construction.edit_mode = !c.data.stage.requirement_construction.edit_mode">
+                  Edit Manually
+                </button>
+                <button class="btn btn-primary pull-right" 
+                        ng-if="c.data.stage.requirement_construction.edit_mode"
+                        ng-click="c.data.stage.requirement_construction.edit_mode">
+                  Save
+                </button>
+                <button class="btn btn-primary pull-right" 
+                        ng-if="c.data.stage.requirement_construction.edit_mode"
+                        ng-click="c.data.stage.requirement_construction.edit_mode">
+                  Cancel
+                </button>
+
+              </div>
+
+              <div>
+
+                <div class="form-group mb-3" ng-if="c.data.stage.requirement_construction.ai_edit_mode">
+                  <label for="FeedbackForEnhancedRequirement" class="form-label">Provide feedback for the following suggestions</label>
+                  <textarea class="form-control" id="feedback_for_enhanced_requirement" 
+                            ng-model="c.data.stage.requirement_construction.feedback_to_ai"
+                            name="userRequirement" rows="4" placeholder="Enter requirements"></textarea>
+                </div>
+                <div class="clearfix" ng-if="c.data.stage.requirement_construction.ai_edit_mode">
+                  <button type="submit" 
+                          ng-click="c.submitFeedbackForAI(c.data.stage.requirement_construction.feedback_to_ai, c.data.stage.requirement_construction.content, c.data.stage.user_requirement.content )" 
+                          class="btn btn-primary pull-right">Submit Feedback</button> 
+
+                  <button type="submit" 
+                          ng-click="c.data.stage.requirement_construction.ai_edit_mode=false" 
+                          class="btn btn-default pull-right">Cancel</button> 
+                </div>
+              </div>
+              <div ng-if="content.content_type === 'json'" class="table-container">
+
+                <div ng-repeat="table in content.content.tables" 
+                     ng-if="false"
+                     class="col-md-6 table-block">
+                  <div class="clearfix">
+                    <button class="btn btn-primary pull-right" ng-click="deleteTable(table)">
+                      <i class="fa fa-trash-o" aria-hidden="true"></i>
+                    </button>
+                  </div>
+                  <div>
+                    <h4>
+                      <span ng-if="!c.data.stage.requirement_construction.edit_mode">{{ table.name }}</span>
+                      <input type="text" ng-model="table.name" ng-if="c.data.stage.requirement_construction.edit_mode">
+                    </h4>
+                    <table>
+                      <tr>
+                        <td><strong>Description:</strong></td>
+                        <td>
+                          <span ng-if="!c.data.stage.requirement_construction.edit_mode">{{ table.description }}</span>
+                          <input type="text" ng-model="table.description" ng-if="c.data.stage.requirement_construction.edit_mode">
+                        </td>
+                      </tr>
+                      <tr>
+                        <td><strong>OOTB:</strong></td>
+                        <td>
+                          <span ng-if="!c.data.stage.requirement_construction.edit_mode">{{ table.ootb ? 'Yes' : 'No' }}</span>
+                          <select ng-model="table.ootb" ng-if="c.data.stage.requirement_construction.edit_mode">
+                            <option value="true">Yes</option>
+                            <option value="false">No</option>
+                          </select>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td><strong>Relationships:</strong></td>
+                        <td>
+                          <table>
+                            <tr>
+                              <th>Related Table</th>
+                              <th>Relationship Type</th>
+                              <th></th>
+                            </tr>
+                            <tr ng-repeat="relationship in table.relationships">
+                              <td>
+                                <span ng-if="!c.data.stage.requirement_construction.edit_mode">{{ relationship.related_table }}</span>
+                                <input type="text" ng-model="relationship.related_table" ng-if="c.data.stage.requirement_construction.edit_mode">
+                              </td>
+                              <td>
+                                <span ng-if="!c.data.stage.requirement_construction.edit_mode">{{ relationship.relationship_type }}</span>
+                                <input type="text" ng-model="relationship.relationship_type" ng-if="c.data.stage.requirement_construction.edit_mode">
+                              </td>
+                              <td>
+                                <button class="btn btn-danger" ng-click="deleteRelationship(table, relationship)" ng-if="c.data.stage.requirement_construction.edit_mode">
+                                  <i class="fa fa-trash-o" aria-hidden="true"></i>
+                                </button>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+                  </div>
+                </div>
+
+                <div ng-repeat="table in content.content.tables" class="col-md-6 table-block">
+                  <div class="table-header">
+                    <h4>
+                      <span ng-if="!c.data.stage.requirement_construction.edit_mode">{{ table.name }}</span>
+                      <input type="text" ng-model="table.name" ng-if="c.data.stage.requirement_construction.edit_mode">
+                    </h4>
+                    <button class="btn btn-primary" ng-click="deleteTable(table)">
+                      <i class="fa fa-trash-o" aria-hidden="true"></i>
+                    </button>
+                  </div>
+                  <div class="table-content">
+                    <p><strong>Description:</strong> 
+                      <span ng-if="!c.data.stage.requirement_construction.edit_mode">{{ table.description }}</span>
+                      <input type="text" ng-model="table.description" ng-if="c.data.stage.requirement_construction.edit_mode">
+                    </p>
+                    <p><strong>OOTB:</strong> 
+                      <span ng-if="!c.data.stage.requirement_construction.edit_mode">{{ table.ootb ? 'Yes' : 'No' }}</span>
+                      <select ng-model="table.ootb" ng-if="c.data.stage.requirement_construction.edit_mode">
+                        <option value="true">Yes</option>
+                        <option value="false">No</option>
+                      </select>
+                    </p>
+                    <div class="relationships-section">
+                      <h5>Relationships:</h5>
+                      <table class="relationships-table">
+                        <tr>
+                          <th>Related Table</th>
+                          <th>Relationship Type</th>
+                          <th></th>
+                        </tr>
+                        <tr ng-repeat="relationship in table.relationships">
+                          <td>
+                            <span ng-if="!c.data.stage.requirement_construction.edit_mode">{{ relationship.related_table }}</span>
+                            <input type="text" ng-model="relationship.related_table" ng-if="c.data.stage.requirement_construction.edit_mode">
+                          </td>
+                          <td>
+                            <span ng-if="!c.data.stage.requirement_construction.edit_mode">{{ relationship.relationship_type }}</span>
+                            <input type="text" ng-model="relationship.relationship_type" ng-if="c.data.stage.requirement_construction.edit_mode">
+                          </td>
+                          <td>
+                            <button class="btn btn-danger" ng-click="deleteRelationship(table, relationship)" ng-if="c.data.stage.requirement_construction.edit_mode">
+                              <i class="fa fa-trash-o" aria-hidden="true"></i>
+                            </button>
+                          </td>
+                        </tr>
+                        <tr ng-if="table.relationships.length === 0">
+                          <td colspan="3" class="text-center">No relationships found</td>
+                        </tr>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+
+
+
+              </div>
+            </div>
+          </div>
+
+        </form>
+        <!-- Submit Button -->
+        <button type="submit" 
+                ng-if="false"
+                ng-click="c.generateFields(c.data.stage.table_name.content, c.data.stage.table_description.content, c.data.stage.requirement_enhancement.content)" 
+                class="btn btn-primary">Generate Fields</button>
+      </div>
+    </div>
+
+  </div>
+
+
+  <div class="col-md-12"    > <!-- user input stack -->
+
+    <div class="panel panel-default">
+      <div class="panel-heading">
+        <h4>
+          <i class="fa fa-plus-square" 
+             ng-if="!c.cs_props.expand_items.user_input.expanded"
+             ng-click="c.cs_props.expand_items.user_input.expanded = !c.cs_props.expand_items.user_input.expanded" aria-hidden="true"></i>
+          <i class="fa fa-minus-square" 
+             ng-if="c.cs_props.expand_items.user_input.expanded"
+             ng-click="c.cs_props.expand_items.user_input.expanded = !c.cs_props.expand_items.user_input.expanded" aria-hidden="true"></i>
+
+          User Input
+        </h4>
+      </div>
+      <div class="panel-body" ng-if="c.cs_props.expand_items.user_input.expanded">
+        <form>
+
+
+          <!-- Table Description Field -->
+          <div class="form-group mb-3">
+            <label for="tableDescription" class="form-label">Provide requirements for Table Schema Generation</label>
+            <textarea class="form-control" id="user_requirement" 
+                      ng-model="c.data.stage.user_requirement.content"
+                      name="userRequirement" rows="4" placeholder="Enter requirements"></textarea>
+          </div>
+
+          <!-- Submit Button -->
+          <button type="submit" 
+                  ng-click="c.submitUserInput(c.data.stage.user_requirement.content)" 
+                  class="btn btn-primary">Generate Suggestions</button>
+        </form>
+      </div>
+    </div>
+
+  </div>
+
+
+</div>
+
+
+
+
+
+
+]]></template>
+    </sp_widget>
+</record_update>

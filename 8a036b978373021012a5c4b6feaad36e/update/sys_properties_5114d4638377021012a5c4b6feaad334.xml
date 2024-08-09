@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_properties">
+    <sys_properties action="INSERT_OR_UPDATE">
+        <choices/>
+        <description/>
+        <ignore_cache>true</ignore_cache>
+        <is_private>false</is_private>
+        <name>x_535429_ai_app_0.gpt_api_key</name>
+        <read_roles/>
+        <suffix>gpt_api_key</suffix>
+        <sys_class_name>sys_properties</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2024-08-09 12:49:50</sys_created_on>
+        <sys_id>5114d4638377021012a5c4b6feaad334</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>x_535429_ai_app_0.gpt_api_key</sys_name>
+        <sys_package display_value="AI App Engine Studio" source="x_535429_ai_app_0">8a036b978373021012a5c4b6feaad36e</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="AI App Engine Studio">8a036b978373021012a5c4b6feaad36e</sys_scope>
+        <sys_update_name>sys_properties_5114d4638377021012a5c4b6feaad334</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2024-08-09 12:49:50</sys_updated_on>
+        <type>string</type>
+        <value/>
+        <write_roles/>
+    </sys_properties>
+    <sys_translated_text action="delete_multiple" query="documentkey=5114d4638377021012a5c4b6feaad334"/>
+</record_update>

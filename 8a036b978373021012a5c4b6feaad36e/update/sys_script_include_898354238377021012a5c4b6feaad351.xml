@@ -1,0 +1,510 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_script_include">
+    <sys_script_include action="INSERT_OR_UPDATE">
+        <access>public</access>
+        <active>true</active>
+        <api_name>x_535429_ai_app_0.OpenAIV2</api_name>
+        <caller_access/>
+        <client_callable>false</client_callable>
+        <description/>
+        <name>OpenAIV2</name>
+        <script><![CDATA[var OpenAIV2 = Class.create();
+OpenAIV2.prototype = {
+    initialize: function(thread_sys_id) {
+        this.TABLE = {
+            THREAD: 'x_535429_ai_busi_0_ai_thread',
+            MESSAGE: 'x_535429_ai_busi_0_ai_message',
+            INSTRUCTION: 'x_535429_ai_busi_0_ai_instructions'
+        };
+        this.current_thread_sys_id = thread_sys_id;
+        this.role = {
+            SYSTEM: 'system',
+            ASSISTANT: 'assistant',
+            USER: 'user'
+        };
+        this.model = 'gpt-4o'; // 'gpt-4-turbo'; //'gpt-4-turbo-preview'; //'gpt-3.5-turbo-0125'; // 'gpt-4-1106-preview'; //'gpt-3.5-turbo-1106'; //  'gpt-3.5-turbo-0125'; // 'gpt-3.5-turbo-0613'; // 'gpt-4-1106-preview';
+        this.insPick = '17e8dbd183794a10e56d5630ceaad3b2';
+        this.reqVerify = '52db5bd183794a10e56d5630ceaad3c9';
+    },
+
+    createThread: function() {
+        var gr = new GlideRecord(this.TABLE.THREAD);
+        gr.initialize();
+        gr.started_by = gs.getUserID();
+        return gr.insert();
+    },
+
+    getNewMessage: function(role) {
+        var gr = new GlideRecord(this.TABLE.MESSAGE);
+        gr.initialize();
+        gr.ai_thread = this.current_thread_sys_id;
+        gr.role = role;
+        gr.insert();
+        return gr;
+    },
+
+    getMessagesQuery: function(type) {
+        if (type == 'ALL') {
+            return 'ai_thread=' + this.current_thread_sys_id;
+        }
+
+        if (type == 'UNGROUPED') {
+            return 'ai_thread=' + this.current_thread_sys_id + '^summarized=false^message_type=message';
+        }
+
+        if (type == 'GROUPED') {
+            return 'ai_thread=' + this.current_thread_sys_id + '^summarized=true^message_type=message';
+        }
+
+        if (type == 'PAYLOAD_CONSTRUCT') {
+            return 'ai_thread=' + this.current_thread_sys_id + '^summarized=false^exclude!=true';
+        }
+
+        return 'abc';
+    },
+
+
+    loadMessageJSON: function(gr) {
+        var messages = [];
+        while (gr.next()) {
+
+            var message = {
+                role: gr.role.toString(),
+                content: gr.content.toString()
+            };
+
+            if (gr.name.toString()) {
+                message.name = gr.name.toString();
+            }
+
+
+            messages.push(message);
+        }
+
+        return messages;
+    },
+
+    getUnGroupedMessages: function() {
+        var gr = new GlideRecord(this.getMessagesQuery('UNGROUPED'));
+        gr.orderBy('order');
+        gr.query();
+        var summary = this.loadMessageJSON(gr);
+        return JSON.stringify(summary);
+    },
+
+    summarize: function() {
+        var gr = this.getNewMessage(this.role.SYSTEM);
+        var summary = this.getUnGroupedMessages();
+        gr.content = summary;
+        gr.message_type = 'summary';
+        gr.insert();
+    },
+
+
+
+    buildPayload: function(payload) {
+        var gr = new GlideRecord(this.TABLE.MESSAGE);
+        gr.addEncodedQuery(this.getMessagesQuery('PAYLOAD_CONSTRUCT'));
+        gr.orderBy('order');
+        gr.query();
+        if (!payload)
+            payload = this.loadMessageJSON(gr);
+
+        var body = {
+            "model": this.model,
+            //"temperature": 0.9,
+            //"response_format" : 'json_object',
+            "messages": payload
+        };
+
+        return JSON.stringify(body);
+    },
+
+    makeCompletionsAPICall: function() {
+        var restMessage = new sn_ws.RESTMessageV2();
+        restMessage.setEndpoint('https://api.openai.com/v1/chat/completions');
+        restMessage.setHttpMethod('POST');
+        this.addRequiredHeaders(restMessage);
+        restMessage.setRequestBody(this.buildPayload()); // Adjust as per actual API requirements
+        var response = restMessage.execute();
+        var responseBody = response.getBody();
+        var jsonData = JSON.parse(responseBody);
+
+        var message = jsonData.choices[0].message;
+        var usage = jsonData.usage;
+
+        return {
+            message: message,
+            usage: usage
+        };
+    },
+
+    genTableGenWidgetDataobj: function() {
+        return {
+            table_display_name: "",
+            table_internal_name: "",
+            state_item_sys_id: "",
+            table_description: null
+        };
+    },
+
+    genTableGenPayload: function(table_data, table_gen_instruction) {
+
+        var gr = new GlideRecord('x_535429_ai_busi_0_ai_instructions');
+        gr.get(table_gen_instruction);
+
+        var payload = {
+            user_input: {
+                table_display_name: table_data.table_display_name,
+                table_description: table_data.table_description
+
+            },
+            instructions_to_be_followed_by_gpt_for_user_input: [
+                JSON.parse(gr.getValue('content'))
+            ]
+        };
+
+        return payload;
+    },
+
+    getTableGenPayload: function(table_data) {
+        return this.genTableGenPayload(table_data, '1eab903e83fdce10e56d5630ceaad3d1');
+    },
+
+    getFieldSuggestionsDep: function(table_data) {
+
+        var messages = [{
+            role: "system",
+            content: JSON.stringify(this.getTableGenPayload(table_data))
+        }];
+
+        var payload = this.buildPayload(messages);
+
+        return this.makeCompletionsAPICallV2(payload);
+    },
+
+    getFieldSuggestions: function(action_payload, table_gen_instruction) {
+
+        var user_requirement = action_payload.user_requirement;
+        if (!table_gen_instruction) {
+            table_gen_instruction = '29226f958316c610e56d5630ceaad37b';
+        }
+
+        var gr = new GlideRecord('x_535429_ai_busi_0_ai_instructions');
+        gr.get(table_gen_instruction);
+
+        var messages = [{
+                role: "system",
+                content: gr.getValue('content')
+            },
+            {
+                role: "user",
+                content: JSON.stringify({
+                    user_requirement: user_requirement
+                })
+            }
+        ];
+
+        if (action_payload.feedback_to_ai) {
+            messages.push({
+                role: "assistant",
+                content: JSON.stringify(action_payload.enhanced_requirement)
+            });
+
+            messages.push({
+                role: "user",
+                content: action_payload.feedback_to_ai
+            });
+        }
+
+        var payload = this.buildPayload(messages);
+
+        return this.makeCompletionsAPICallV2(payload);
+    },
+
+
+    loadTables: function(payload) {
+        var gUtil = new global.AIExcBridgeUtil();
+        gUtil.loadTables(payload);
+    },
+
+    getRefinedL2Schema: function(tables) {
+        var gri = new GlideRecord(this.TABLE.INSTRUCTION);
+        gri.get('10d0307d83de0a10e56d5630ceaad373');
+
+        var messages = [{
+                role: "system",
+                content: gri.getValue('content')
+            },
+            {
+                role: "user",
+                content: "Refine the following tables as per the specified instructions" + JSON.stringify(tables)
+            }
+        ];
+
+        var payload = this.buildPayload(messages);
+
+        return this.makeCompletionsAPICallV2(payload);
+
+    },
+
+    getL2SchemaForTable: function(table_details) {
+        var gri = new GlideRecord(this.TABLE.INSTRUCTION);
+        gri.get('1e10e9e583920a10e56d5630ceaad3f3');
+
+        var messages = [{
+                role: "system",
+                content: gri.getValue('content')
+            },
+            {
+                role: "assistant",
+                content: JSON.stringify(table_details.tables)
+            },
+            {
+                role: "user",
+                content: "Expand and generate list of sections and fields to be present for the below specified table only\n" +
+                    "Table Name: " + table_details.name + "\n" +
+                    "Table Description" + table_details.description + "\n"
+            }
+        ];
+
+        var payload = this.buildPayload(messages);
+
+        return this.makeCompletionsAPICallV2(payload);
+
+    },
+
+    genFieldSuggestions: function(table_name,
+        table_description,
+        ai_enhanced_user_requirement,
+        table_gen_instruction) {
+
+        if (!table_gen_instruction) {
+            table_gen_instruction = '1f9f49df83060610e56d5630ceaad321';
+        }
+
+        var gr = new GlideRecord('x_535429_ai_busi_0_ai_instructions');
+        gr.get(table_gen_instruction);
+
+        var messages = [{
+                role: "system",
+                content: "Fields to be created for ServiceNow platform. Generate Fieds and sections in JSON format, array of objs with section names and fields arrays with just names of the fields. JSON should be clean and should not include any type of comments or characters that makes JSON parse invalid"
+            },
+            {
+                role: "system",
+                content: "Expand eaech and every section and field to more granualr level when possible while listing fields"
+            },
+            {
+                role: "user",
+                content: JSON.stringify({
+                    table_name: table_name,
+                    table_description: table_description
+                })
+            },
+            {
+                role: "assistant",
+                content: ai_enhanced_user_requirement
+            },
+            {
+                role: "user",
+                content: "based on the listed requirements by AI for the table "
+            }
+        ];
+
+        var payload = this.buildPayload(messages);
+
+        return this.makeCompletionsAPICallV2(payload);
+    },
+
+
+
+    makeCompletionsAPICallV2: function(json_payload) {
+        // gs.addInfoMessage(json_payload);
+        var restMessage = new sn_ws.RESTMessageV2();
+        restMessage.setEndpoint('https://api.openai.com/v1/chat/completions');
+        restMessage.setHttpMethod('POST');
+        this.addRequiredHeaders(restMessage);
+        restMessage.setRequestBody(json_payload); // Adjust as per actual API requirements
+        var response = restMessage.execute();
+        var responseBody = response.getBody();
+        //InfoMessage(responseBody);
+        var jsonData = JSON.parse(responseBody);
+
+        var message = jsonData.choices[0].message;
+        var usage = jsonData.usage;
+
+        return {
+            message: message,
+            usage: usage
+        };
+    },
+
+
+
+    getInstruction: function(key) {
+        var gr = new GlideRecord('x_535429_ai_busi_0_ai_instructions');
+        gr.addEncodedQuery('name=' + key);
+        gr.query();
+        if (gr.next()) {
+            var res = gr.getValue('content');
+            return res;
+        }
+    },
+
+    processMessage: function(content, role, name, tag_as_system_message) {
+
+        var gr = this.getNewMessage(role);
+        if (role == this.role.SYSTEM) {
+            var getInstruction = this.getInstruction;
+            var instructions = [];
+            content.forEach(function(ins) {
+                if (ins.selected) {
+                    instructions.push(getInstruction(ins.value));
+                }
+            });
+            gr.content = instructions.join("\n\n");
+        } else {
+            gr.content = content;
+        }
+        if (name)
+            gr.name = name;
+        gr.update();
+
+        if (role == this.role.SYSTEM) {
+            return;
+        }
+        var response = this.makeCompletionsAPICall();
+        if (response.message.content) {
+            var grAs = this.getNewMessage(this.role.ASSISTANT);
+            grAs.content = response.message.content;
+            grAs.prompt_tokens = response.usage.prompt_tokens;
+            grAs.completion_tokens = response.usage.completion_tokens;
+            grAs.total_tokens = response.usage.total_tokens;
+            grAs.update();
+
+        }
+
+    },
+
+    getInstructionsMetaData: function() {
+        var grIns = new GlideRecord('x_535429_ai_busi_0_ai_instructions');
+        grIns.addEncodedQuery('implicit_instruction!=true');
+        grIns.query();
+        var titles = [];
+        while (grIns.next()) {
+            titles.push(grIns.getValue('title'));
+        }
+        return titles;
+    },
+
+    setInstructionsForThread: function(userInput) {
+        var grIn = new GlideRecord('x_535429_ai_busi_0_ai_instructions');
+        grIn.get(this.insPick);
+
+        return JSON.stringify({
+            user_input: userInput,
+            instructionToProcessUserInput: grIn.getValue('content'),
+            availableInstructions: this.getInstructionsMetaData()
+        });
+    },
+
+    verifyCompleteness: function(userInput, instructions) {
+        instructions = JSON.parse(instructions);
+        var grIn = new GlideRecord('x_535429_ai_busi_0_ai_instructions');
+        grIn.get(this.reqVerify);
+
+        var grIns = new GlideRecord('x_535429_ai_busi_0_ai_instructions');
+        grIns.addEncodedQuery('titleIN' + instructions.instructions.join(","));
+        grIns.query();
+
+        var ins = [];
+
+        while (grIns.next()) {
+            ins.push({
+                title: grIns.getValue('title'),
+                details: grIns.getValue('content')
+            });
+        }
+
+        return JSON.stringify({
+            user_input: userInput,
+            instructionToProcessUserInput: grIn.getValue('content'),
+            isntructions: ins
+        });
+    },
+
+    addRequiredHeaders: function(restMessage) {
+        var apiKey = gs.getProperty('x_535429_ai_app_0.gpt_api_key');
+        restMessage.setRequestHeader('Content-Type', 'application/json');
+        restMessage.setRequestHeader('Authorization', 'Bearer ' + apiKey);
+        // restMessage.setRequestHeader('OpenAIV2-Beta', 'assistants=v1');
+    },
+
+    parseAIResponse: function(responseText) {
+        var contentArray = [];
+        var lastIndex = 0; // Tracks the end index of the last match
+
+        // Regular expression pattern to identify content blocks
+        var contentPattern = /```(\w+)[\s\S]*?\n([\s\S]*?)```/g;
+        var match;
+
+        // Iterating over all matches in the response text
+        while ((match = contentPattern.exec(responseText)) !== null) {
+            // Add any text content before the current match
+            //this.addTextContent(responseText, lastIndex, match.index, contentArray);
+
+            var contentType = match[1].trim(); // Extract content type (e.g., "json", "javascript")
+            var content = match[2].trim(); // Extract the content within the block
+
+            // Adding the extracted content with its type to the array
+            contentArray.push({
+                "content_type": contentType,
+                "content": content
+            });
+
+            lastIndex = contentPattern.lastIndex; // Update lastIndex to the end of the current match
+        }
+
+        // Add any remaining text content after the last match
+        //this.addTextContent(responseText, lastIndex, responseText.length, contentArray);
+
+        return contentArray;
+    },
+
+    executeScript: function(message_sys_id) {
+        var gr = new GlideRecord('x_535429_ai_busi_0_ai_message');
+        gr.get(message_sys_id);
+
+        gr.script_execution_status = 'running';
+        gr.update();
+
+        var script_handled = 'try{ \n' + gr.getValue('extracted_script') + ' \n}catch(e){ e.toString() }';
+
+        var res = new global.GlobalBridgeUtils().bridgetEvaluatorV2(script_handled);
+
+        gr.script_execution_result = 'success';
+
+        if (res) {
+            gr.script_response = JSON.stringify(res);
+        }
+        gr.script_executed = true;
+
+        gr.update();
+    },
+
+
+    type: 'OpenAIV2'
+};]]></script>
+        <sys_class_name>sys_script_include</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2024-08-09 12:47:20</sys_created_on>
+        <sys_id>898354238377021012a5c4b6feaad351</sys_id>
+        <sys_mod_count>1</sys_mod_count>
+        <sys_name>OpenAIV2</sys_name>
+        <sys_package display_value="AI App Engine Studio" source="x_535429_ai_app_0">8a036b978373021012a5c4b6feaad36e</sys_package>
+        <sys_policy>read</sys_policy>
+        <sys_scope display_value="AI App Engine Studio">8a036b978373021012a5c4b6feaad36e</sys_scope>
+        <sys_update_name>sys_script_include_898354238377021012a5c4b6feaad351</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2024-08-09 12:50:10</sys_updated_on>
+    </sys_script_include>
+</record_update>
