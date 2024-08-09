@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?><database>
+    <element db_object_id="bc005c2f8337021012a5c4b6feaad3f8" label="AI Instruction" max_length="40" name="x_535429_ai_app_0_ai_instruction" type="collection">
+        <element label="Implicit Instruction" max_length="40" name="implicit_instruction" type="string"/>
+        <element attributes="edge_encryption_enabled=true" default="javascript:global.getNextObjNumberPadded();" label="Number" max_length="40" name="number" type="string"/>
+        <element label="Content" max_length="40" name="content" type="string"/>
+        <element label="Title" max_length="40" name="title" type="string"/>
+        <element label="Name" max_length="40" name="name" type="string"/>
+    </element>
+</database>
